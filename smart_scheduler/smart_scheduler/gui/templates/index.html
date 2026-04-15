@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Smart Scheduler — CPU Scheduling Framework</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg-deep:    #000000;
+    --glass:      rgba(255,255,255,0.035);
+    --glass-hover:rgba(255,255,255,0.06);
+    --glass-bd:   rgba(255,255,255,0.09);
+    --glass-bd2:  rgba(255,255,255,0.05);
+    --purple:     #a855f7;
+    --violet:     #8b5cf6;
+    --blue:       #60a5fa;
+    --cyan:       #67e8f9;
+    --pink:       #f472b6;
+    --amber:      #fbbf24;
+    --green:      #34d399;
+    --text:       #f0f0f0;
+    --text-muted: rgba(220,220,240,0.4);
+    --text-dim:   rgba(220,220,240,0.18);
+    --sans:       'Outfit', sans-serif;
+    --mono:       'JetBrains Mono', monospace;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #000; color: var(--text); font-family: var(--sans); min-height: 100vh; overflow-x: hidden; }
+
+  /* BG */
+  .bg-canvas { position: fixed; inset: 0; z-index: 0; overflow: hidden; background: #000; }
+  .orb { position: absolute; border-radius: 50%; filter: blur(110px); opacity: 0.28; animation: drift 20s ease-in-out infinite alternate; }
+  .orb-1 { width: 700px; height: 700px; background: radial-gradient(circle,#7c3aed,transparent 70%); top:-220px; left:-150px; animation-delay:0s; }
+  .orb-2 { width: 560px; height: 560px; background: radial-gradient(circle,#1e40af,transparent 70%); bottom:-200px; right:-140px; animation-delay:-8s; }
+  .orb-3 { width: 360px; height: 360px; background: radial-gradient(circle,#6d28d9,transparent 70%); top:40%; left:42%; animation-delay:-14s; }
+  .orb-4 { width: 260px; height: 260px; background: radial-gradient(circle,#0369a1,transparent 70%); top:16%; right:12%; animation-delay:-5s; }
+  @keyframes drift { from{transform:translate(0,0) scale(1);} to{transform:translate(40px,28px) scale(1.09);} }
+  .bg-canvas::after { content:''; position:absolute; inset:0; background-image:radial-gradient(rgba(255,255,255,0.045) 1px,transparent 1px); background-size:40px 40px; }
+  #particle-canvas { position:absolute; inset:0; z-index:1; pointer-events:none; }
+  @keyframes ganttFill { from{clip-path:inset(0 100% 0 0);} to{clip-path:inset(0 0% 0 0);} }
+  .g-seg-anim { animation:ganttFill 0.55s cubic-bezier(.4,0,.2,1) both; }
+  @keyframes barGrow { from{width:0%} to{width:var(--tw)} }
+  .fairness-bar-fill { width:0%; animation:barGrow 1.4s cubic-bezier(.4,0,.2,1) forwards; }
+
+  /* LAYOUT */
+  .app { position:relative; z-index:1; display:flex; flex-direction:column; min-height:100vh; }
+
+  /* NAV */
+  nav {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:12px 30px;
+    background:rgba(0,0,0,0.80); backdrop-filter:blur(28px);
+    border-bottom:1px solid var(--glass-bd);
+  }
+  .logo { font-size:20px; font-weight:800; letter-spacing:-0.5px; background:linear-gradient(135deg,var(--purple),var(--blue)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+  .nav-pills { display:flex; gap:8px; }
+  .nav-pill {
+    padding:6px 18px; border-radius:100px; border:1px solid var(--glass-bd);
+    background:var(--glass); backdrop-filter:blur(12px);
+    font-size:12px; font-weight:600; color:var(--text-muted);
+    cursor:pointer; transition:all .2s; font-family:var(--sans);
+  }
+  .nav-pill:hover, .nav-pill.active { background:rgba(155,93,229,0.2); border-color:rgba(155,93,229,0.5); color:var(--text); }
+  .status-dot { display:flex; align-items:center; gap:8px; font-size:11px; font-weight:600; color:var(--text-muted); font-family:var(--mono); }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--cyan); box-shadow:0 0 10px var(--cyan); animation:blink 2.4s ease-in-out infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  /* BODY */
+  .body-grid { display:grid; grid-template-columns:420px 1fr; flex:1; }
+
+  /* SIDEBAR */
+  .sidebar {
+    border-right:1px solid var(--glass-bd2);
+    padding:16px 18px; display:flex; flex-direction:column; gap:10px;
+    overflow-y:scroll; height:calc(100vh - 61px);
+    background:rgba(0,0,0,0.55); backdrop-filter:blur(16px);
+  }
+
+  /* CARD */
+  .card { background:var(--glass); border:1px solid var(--glass-bd); border-radius:16px; backdrop-filter:blur(20px); overflow:visible; transition:border-color .2s; }
+  .card:hover { border-color:rgba(155,93,229,0.28); }
+  .card-head { display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid var(--glass-bd2); }
+  .card-icon { width:26px; height:26px; border-radius:7px; display:grid; place-items:center; background:rgba(155,93,229,0.18); font-size:12px; flex-shrink:0; }
+  .card-head h3 { font-size:12px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; color:var(--text); }
+  .card-head .count { margin-left:auto; font-size:11px; font-weight:700; font-family:var(--mono); background:rgba(155,93,229,0.18); padding:2px 10px; border-radius:100px; color:var(--purple); }
+  .card-body { padding:10px 14px; }
+
+  /* FORM */
+  .field { margin-bottom:8px; }
+  .field:last-child { margin-bottom:0; }
+  label { display:block; font-size:11px; font-weight:500; color:var(--text-muted); margin-bottom:5px; }
+  input, select {
+    width:100%; background:rgba(255,255,255,0.04); border:1px solid var(--glass-bd);
+    color:var(--text); font-family:var(--mono); font-size:13px; font-weight:500;
+    padding:6px 11px; border-radius:10px; outline:none; transition:all .2s; -webkit-appearance:none;
+  }
+  input:focus, select:focus { border-color:rgba(155,93,229,0.6); background:rgba(155,93,229,0.07); box-shadow:0 0 0 3px rgba(155,93,229,0.11); }
+  select option { background:#0a0620; }
+  .row2 { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+  .row3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:9px; }
+
+  /* PROC TABLE */
+  .ptable { width:100%; border-collapse:collapse; font-size:12px; font-family:var(--mono); }
+  .ptable th { padding:7px 10px; color:var(--text-dim); font-size:10px; text-align:left; font-weight:500; letter-spacing:0.5px; border-bottom:1px solid var(--glass-bd2); }
+  .ptable td { padding:6px 10px; border-bottom:1px solid rgba(255,255,255,0.04); }
+  .ptable tr:last-child td { border-bottom:none; }
+  .ptable tr:hover td { background:rgba(155,93,229,0.05); }
+  .pid-tag { display:inline-block; padding:2px 9px; border-radius:100px; font-size:11px; font-weight:600; background:rgba(155,93,229,0.15); color:var(--purple); border:1px solid rgba(155,93,229,0.25); }
+  .btn-del { background:none; border:1px solid rgba(247,37,133,0.2); color:var(--pink); cursor:pointer; padding:2px 8px; border-radius:6px; font-size:11px; font-family:var(--mono); transition:all .2s; }
+  .btn-del:hover { background:rgba(247,37,133,0.12); border-color:var(--pink); }
+
+  /* BUTTONS */
+  .btn { width:100%; padding:9px 16px; border-radius:12px; font-family:var(--sans); font-size:13px; font-weight:600; cursor:pointer; border:none; transition:all .25s; display:flex; align-items:center; justify-content:center; gap:8px; }
+  .btn-run { background:linear-gradient(135deg,#7b2fff,#4ea8de); color:#fff; box-shadow:0 4px 24px rgba(123,47,255,0.38); }
+  .btn-run:hover { transform:translateY(-2px); box-shadow:0 8px 32px rgba(123,47,255,0.55); }
+  .btn-compare { background:var(--glass); border:1px solid rgba(78,168,222,0.32); color:var(--blue); }
+  .btn-compare:hover { background:rgba(78,168,222,0.1); border-color:var(--blue); }
+  .btn-demo { background:var(--glass); border:1px solid var(--glass-bd); color:var(--text-muted); }
+  .btn-demo:hover { background:rgba(255,255,255,0.07); color:var(--text); }
+  .btn-add { background:rgba(155,93,229,0.12); border:1px solid rgba(155,93,229,0.28); color:var(--purple); }
+  .btn-add:hover { background:rgba(155,93,229,0.2); }
+  .btn-group { display:flex; flex-direction:column; gap:9px; }
+
+  /* MAIN */
+  .main-panel { padding:26px 30px; display:flex; flex-direction:column; gap:22px; overflow-y:auto; max-height:calc(100vh - 61px); }
+
+  /* GANTT HERO */
+  .gantt-hero {
+    background:var(--glass); border:1px solid var(--glass-bd);
+    border-radius:20px; backdrop-filter:blur(24px);
+    padding:26px 28px; overflow:hidden; position:relative;
+  }
+  .gantt-hero::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg,#7b2fff,#4ea8de,#80ffdb,transparent); }
+  .gantt-top { display:flex; align-items:center; gap:12px; margin-bottom:22px; flex-wrap:wrap; }
+  .gantt-top h2 { font-size:16px; font-weight:700; }
+  .gbadge { font-size:11px; font-weight:600; font-family:var(--mono); padding:3px 12px; border-radius:100px; background:rgba(155,93,229,0.15); border:1px solid rgba(155,93,229,0.28); color:var(--purple); }
+  .gbadge.cyan  { background:rgba(128,255,219,0.1); border-color:rgba(128,255,219,0.3); color:var(--cyan); }
+  .gbadge.amber { background:rgba(251,191,36,0.1); border-color:rgba(251,191,36,0.3); color:var(--amber); }
+
+  /* Gantt Rows */
+  .gantt-scroll { overflow-x:auto; padding-bottom:6px; }
+  .gantt-inner { min-width:500px; }
+  .g-row { display:flex; align-items:center; margin-bottom:8px; }
+  .g-label { width:48px; flex-shrink:0; font-size:11px; font-weight:600; font-family:var(--mono); color:var(--text-muted); text-align:right; padding-right:12px; }
+  .g-track { flex:1; height:34px; background:rgba(255,255,255,0.03); border-radius:8px; overflow:hidden; display:flex; border:1px solid rgba(255,255,255,0.05); }
+  .g-seg {
+    height:100%; display:flex; align-items:center; justify-content:center;
+    font-size:10px; font-weight:700; font-family:var(--mono); color:rgba(255,255,255,0.9);
+    position:relative; overflow:hidden; cursor:pointer; transition:filter .2s;
+    border-right:1px solid rgba(0,0,0,0.15); flex-shrink:0;
+  }
+  .g-seg:hover { filter:brightness(1.2); }
+  .g-seg::after { content:''; position:absolute; inset:0; background:linear-gradient(180deg,rgba(255,255,255,0.18) 0%,transparent 60%); pointer-events:none; }
+  .g-idle { background:rgba(255,255,255,0.04) !important; color:var(--text-dim) !important; font-size:8px; }
+
+  /* Ticks */
+  .g-ticks { display:flex; margin-left:48px; margin-top:4px; }
+  .g-tick { font-size:9px; font-family:var(--mono); color:var(--text-dim); border-left:1px solid rgba(255,255,255,0.07); padding:3px 0 0 3px; flex-shrink:0; user-select:none; }
+
+  /* Legend */
+  .g-legend { display:flex; flex-wrap:wrap; gap:10px; margin-top:18px; }
+  .g-legend-item { display:flex; align-items:center; gap:7px; font-size:11px; font-weight:500; color:var(--text-muted); }
+  .g-swatch { width:11px; height:11px; border-radius:3px; }
+
+  /* METRICS */
+  .metrics-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:13px; }
+  .metric-card { background:var(--glass); border:1px solid var(--glass-bd); border-radius:16px; backdrop-filter:blur(16px); padding:18px 16px; position:relative; overflow:hidden; transition:transform .2s,border-color .2s; }
+  .metric-card:hover { transform:translateY(-2px); border-color:rgba(155,93,229,0.32); }
+  .metric-card::before { content:''; position:absolute; top:0; left:18px; right:18px; height:1px; background:linear-gradient(90deg,transparent,rgba(155,93,229,0.45),transparent); }
+  .metric-num { font-size:28px; font-weight:800; line-height:1; background:linear-gradient(135deg,var(--purple),var(--blue)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+  .metric-num.green  { background:linear-gradient(135deg,var(--cyan),#06b6d4); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+  .metric-num.pink   { background:linear-gradient(135deg,var(--pink),#f97316); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+  .metric-num.amber  { background:linear-gradient(135deg,var(--amber),#f97316); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+  .metric-unit { font-size:13px; font-weight:500; opacity:.55; margin-left:2px; }
+  .metric-label { font-size:10px; color:var(--text-muted); margin-top:6px; font-weight:500; letter-spacing:0.3px; }
+
+  /* ADAPTIVE DECISION PANEL */
+  .decision-panel {
+    background:var(--glass); border:1px solid rgba(78,168,222,0.22);
+    border-radius:16px; padding:16px 20px; font-size:12px;
+  }
+  .decision-panel h4 { font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:var(--blue); margin-bottom:12px; }
+  .decision-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin-bottom:12px; }
+  .dec-item { background:rgba(255,255,255,0.03); border:1px solid var(--glass-bd2); border-radius:10px; padding:8px 12px; }
+  .dec-label { font-size:10px; color:var(--text-dim); margin-bottom:3px; }
+  .dec-val { font-size:13px; font-weight:600; font-family:var(--mono); color:var(--cyan); }
+  .decision-reason { background:rgba(78,168,222,0.05); border:1px solid rgba(78,168,222,0.15); border-radius:10px; padding:10px 14px; font-size:12px; color:var(--text-muted); line-height:1.6; }
+
+  /* RESULTS TABLE */
+  .results-card { background:var(--glass); border:1px solid var(--glass-bd); border-radius:16px; backdrop-filter:blur(16px); overflow:hidden; }
+  .results-head { display:flex; align-items:center; gap:10px; padding:15px 20px; border-bottom:1px solid var(--glass-bd2); }
+  .results-head h3 { font-size:13px; font-weight:600; }
+  .rtable { width:100%; border-collapse:collapse; font-size:12px; }
+  .rtable th { padding:9px 16px; text-align:right; font-size:10px; font-weight:600; letter-spacing:0.8px; text-transform:uppercase; color:var(--text-dim); border-bottom:1px solid var(--glass-bd2); }
+  .rtable th:first-child { text-align:left; }
+  .rtable td { padding:11px 16px; text-align:right; border-bottom:1px solid rgba(255,255,255,0.03); font-family:var(--mono); }
+  .rtable td:first-child { text-align:left; font-family:var(--sans); }
+  .rtable tr:last-child td { border-bottom:none; }
+  .rtable tr:hover td { background:rgba(155,93,229,0.05); }
+  .good { color:var(--cyan); font-weight:700; }
+  .bad  { color:var(--pink); font-weight:700; }
+
+  /* FAIRNESS BAR */
+  .fairness-bar-wrap { margin-top:8px; }
+  .fairness-bar-bg { background:rgba(255,255,255,0.06); border-radius:100px; height:6px; overflow:hidden; }
+  .fairness-bar-fill { height:100%; border-radius:100px; background:linear-gradient(90deg,var(--pink),var(--amber),var(--cyan)); transition:width .6s ease; }
+  .fairness-label { font-size:10px; color:var(--text-muted); margin-top:4px; }
+
+  /* COMPARE */
+  .compare-scroll { overflow-x:auto; }
+  .ctable { width:100%; border-collapse:collapse; font-size:12px; min-width:600px; }
+  .ctable th { padding:9px 15px; text-align:right; font-size:10px; letter-spacing:0.8px; text-transform:uppercase; color:var(--text-dim); border-bottom:1px solid var(--glass-bd2); }
+  .ctable th:first-child { text-align:left; }
+  .ctable td { padding:10px 15px; text-align:right; border-bottom:1px solid rgba(255,255,255,0.03); font-family:var(--mono); }
+  .ctable td:first-child { text-align:left; font-family:var(--sans); font-weight:600; }
+  .ctable tr:last-child td { border-bottom:none; }
+  .ctable tr:hover td { background:rgba(155,93,229,0.05); }
+  .cv-best  { color:var(--cyan); font-weight:700; }
+  .cv-worst { color:var(--pink); }
+
+  /* PLACEHOLDER / LOADER */
+  .placeholder { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:70px 40px; gap:14px; text-align:center; }
+  .ph-icon { width:72px; height:72px; border-radius:20px; background:rgba(155,93,229,0.1); border:1px solid rgba(155,93,229,0.2); display:grid; place-items:center; font-size:28px; margin-bottom:8px; }
+  .placeholder h3 { font-size:18px; font-weight:700; }
+  .placeholder p { font-size:13px; color:var(--text-muted); max-width:320px; line-height:1.7; }
+  .loader { display:none; align-items:center; justify-content:center; gap:14px; padding:60px; font-size:13px; color:var(--text-muted); font-weight:600; }
+  .loader.active { display:flex; }
+  .spinner { width:22px; height:22px; border:2px solid rgba(155,93,229,0.2); border-top-color:var(--purple); border-radius:50%; animation:spin .7s linear infinite; }
+  @keyframes spin { to{transform:rotate(360deg);} }
+  .hidden { display:none !important; }
+
+  /* TOAST */
+  #toast { position:fixed; top:20px; right:20px; z-index:9999; padding:13px 20px; border-radius:12px; font-size:13px; font-weight:500; background:rgba(247,37,133,0.15); border:1px solid rgba(247,37,133,0.35); color:var(--text); backdrop-filter:blur(20px); opacity:0; transform:translateY(-8px) scale(0.97); transition:all .3s; pointer-events:none; max-width:300px; }
+  #toast.show { opacity:1; transform:translateY(0) scale(1); }
+  #toast.success { background:rgba(128,255,219,0.1); border-color:rgba(128,255,219,0.3); }
+
+  ::-webkit-scrollbar { width:4px; height:4px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  ::-webkit-scrollbar-thumb { background:rgba(155,93,229,0.22); border-radius:2px; }
+
+  @keyframes fadeUp { from{opacity:0;transform:translateY(18px);} to{opacity:1;transform:translateY(0);} }
+  .anim { animation:fadeUp .4s ease forwards; }
+  .d1 { animation-delay:.04s; opacity:0; }
+  .d2 { animation-delay:.12s; opacity:0; }
+  .d3 { animation-delay:.21s; opacity:0; }
+  .d4 { animation-delay:.30s; opacity:0; }
+</style>
+</head>
+<body>
+<div class="bg-canvas">
+  <canvas id="particle-canvas"></canvas>
+  <div class="orb orb-1"></div><div class="orb orb-2"></div>
+  <div class="orb orb-3"></div><div class="orb orb-4"></div>
+</div>
+
+<div class="app">
+  <nav>
+    <div class="logo">Smart Scheduler</div>
+    <div class="nav-pills">
+      <button class="nav-pill active" id="pillSim" onclick="showPill(this,'sim')">Simulate</button>
+      <button class="nav-pill" id="pillCmp" onclick="showPill(this,'cmp');runCompare()">Compare All</button>
+    </div>
+    <div class="status-dot"><div class="dot"></div><span id="statusTxt">READY</span></div>
+  </nav>
+
+  <div class="body-grid">
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="card">
+        <div class="card-head"><div class="card-icon">⚙️</div><h3>Algorithm</h3></div>
+        <div class="card-body">
+          <div class="field">
+            <label>Scheduling Algorithm</label>
+            <select id="algo">
+              <option value="adaptive">Adaptive (Auto-select)</option>
+              <option value="FCFS">FCFS — First Come First Served</option>
+              <option value="SJF">SJF — Shortest Job First</option>
+              <option value="SRTF">SRTF — Shortest Remaining Time</option>
+              <option value="Priority">Priority Scheduling</option>
+              <option value="RR">Round Robin</option>
+            </select>
+          </div>
+          <div class="row2">
+            <div class="field"><label>RR Quantum (0 = auto)</label><input type="number" id="quantum" value="0" min="0"/></div>
+            <div class="field"><label>Starv. Threshold</label><input type="number" id="starvThreshold" value="15" min="1"/></div>
+          </div>
+          <div class="field" style="margin-bottom:0"><label>Aging Boost (priority/cycle)</label><input type="number" id="agingBoost" value="1" min="0"/></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><div class="card-icon">➕</div><h3>Add Process</h3></div>
+        <div class="card-body">
+          <div class="row2">
+            <div class="field"><label>PID</label><input type="text" id="inPid" placeholder="P1"/></div>
+            <div class="field"><label>Arrival Time</label><input type="number" id="inArrival" value="0" min="0"/></div>
+          </div>
+          <div class="row2">
+            <div class="field"><label>Burst Time</label><input type="number" id="inBurst" value="5" min="1"/></div>
+            <div class="field"><label>Priority</label><input type="number" id="inPriority" value="1" min="1"/></div>
+          </div>
+          <button class="btn btn-add" style="margin-top:10px" onclick="addProcess()">+ Add Process</button>
+        </div>
+      </div>
+
+      <div class="card" style="flex:1">
+        <div class="card-head">
+          <div class="card-icon">📋</div><h3>Process Queue</h3>
+          <span class="count" id="procCount">0</span>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="ptable">
+            <thead><tr><th>PID</th><th>Arr</th><th>Burst</th><th>Pri</th><th></th></tr></thead>
+            <tbody id="procTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="btn-group">
+        <button class="btn btn-run" onclick="runSimulate()">▶ &nbsp;Run Simulation</button>
+        <button class="btn btn-demo" onclick="loadDemo()">◈ &nbsp;Load Demo Processes</button>
+      </div>
+    </aside>
+
+    <!-- MAIN -->
+    <div class="main-panel" id="mainPanel">
+      <div class="placeholder" id="placeholder">
+        <div class="ph-icon">🖥️</div>
+        <h3>Smart Scheduler Ready</h3>
+        <p>Add processes, pick an algorithm, and hit <strong>Run Simulation</strong> to see the Gantt chart, fairness index, and full performance metrics.</p>
+      </div>
+      <div class="loader" id="loader"><div class="spinner"></div> Running scheduler...</div>
+
+      <!-- SIM VIEW -->
+      <div id="simView" class="hidden">
+        <!-- Gantt Chart -->
+        <div class="gantt-hero anim d1">
+          <div class="gantt-top">
+            <h2>Gantt Chart</h2>
+            <span class="gbadge" id="algoLabel">—</span>
+            <span class="gbadge cyan" id="timeLabel">—</span>
+            <span class="gbadge amber" id="quantumLabel" style="display:none">—</span>
+          </div>
+          <div class="gantt-scroll"><div class="gantt-inner" id="ganttInner"></div></div>
+          <div class="g-legend" id="ganttLegend"></div>
+        </div>
+
+        <!-- Performance Metrics Row -->
+        <div class="metrics-row anim d2" id="metricsRow"></div>
+
+        <!-- Adaptive Decision Engine Panel -->
+        <div class="decision-panel anim d3" id="decisionPanel" style="display:none">
+          <h4>⚡ Adaptive Decision Engine</h4>
+          <div class="decision-grid" id="decisionGrid"></div>
+          <div class="decision-reason" id="decisionReason"></div>
+        </div>
+
+        <!-- Per-Process Results Table -->
+        <div class="results-card anim d4">
+          <div class="results-head">
+            <div class="card-icon" style="width:26px;height:26px;border-radius:7px;display:grid;place-items:center;background:rgba(155,93,229,0.18);font-size:12px;">📊</div>
+            <h3>Per-Process Results</h3>
+          </div>
+          <table class="rtable">
+            <thead><tr>
+              <th>PID</th><th>Arrival</th><th>Burst</th><th>Completion</th>
+              <th>Turnaround</th><th>Waiting</th><th>Response</th>
+            </tr></thead>
+            <tbody id="procResults"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- CMP VIEW -->
+      <div id="cmpView" class="hidden">
+        <div class="results-card anim d1">
+          <div class="results-head">
+            <div class="card-icon" style="width:26px;height:26px;border-radius:7px;display:grid;place-items:center;background:rgba(78,168,222,0.18);font-size:12px;">⇌</div>
+            <h3>Algorithm Comparison</h3>
+          </div>
+          <div class="compare-scroll">
+            <table class="ctable">
+              <thead><tr>
+                <th>Algorithm</th>
+                <th>Avg Turnaround</th>
+                <th>Avg Waiting</th>
+                <th>Avg Response</th>
+                <th>Throughput</th>
+                <th>CPU Util %</th>
+                <th>Fairness (JFI)</th>
+                <th>Ctx Switches</th>
+              </tr></thead>
+              <tbody id="cmpBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const GRADIENTS = [
+  'linear-gradient(135deg,#7b2fff,#9b5de5)',
+  'linear-gradient(135deg,#0ea5e9,#4ea8de)',
+  'linear-gradient(135deg,#f72585,#b5179e)',
+  'linear-gradient(135deg,#06b6d4,#80ffdb)',
+  'linear-gradient(135deg,#f97316,#fbbf24)',
+  'linear-gradient(135deg,#10b981,#34d399)',
+  'linear-gradient(135deg,#6366f1,#818cf8)',
+  'linear-gradient(135deg,#ec4899,#f472b6)',
+];
+const SOLIDS = ['#9b5de5','#4ea8de','#f72585','#80ffdb','#f97316','#34d399','#818cf8','#f472b6'];
+
+let processes = [], pidCounter = 1;
+
+function showPill(btn, view) {
+  document.querySelectorAll('.nav-pill').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function addProcess() {
+  const pid   = document.getElementById('inPid').value.trim() || `P${pidCounter}`;
+  const arr   = parseInt(document.getElementById('inArrival').value) || 0;
+  const burst = parseInt(document.getElementById('inBurst').value)   || 1;
+  const pri   = parseInt(document.getElementById('inPriority').value) || 1;
+  processes.push({pid, arrival_time:arr, burst_time:burst, priority:pri});
+  pidCounter++;
+  document.getElementById('inPid').value = `P${pidCounter}`;
+  renderTable();
+}
+
+function removeProcess(i) { processes.splice(i, 1); renderTable(); }
+
+function renderTable() {
+  document.getElementById('procTableBody').innerHTML = processes.map((p, i) => `
+    <tr>
+      <td><span class="pid-tag">${p.pid}</span></td>
+      <td>${p.arrival_time}</td><td>${p.burst_time}</td><td>${p.priority}</td>
+      <td><button class="btn-del" onclick="removeProcess(${i})">✕</button></td>
+    </tr>`).join('');
+  document.getElementById('procCount').textContent = processes.length;
+}
+
+function loadDemo() {
+  processes = [
+    {pid:'P1', arrival_time:0, burst_time:8, priority:2},
+    {pid:'P2', arrival_time:1, burst_time:4, priority:1},
+    {pid:'P3', arrival_time:2, burst_time:9, priority:3},
+    {pid:'P4', arrival_time:3, burst_time:5, priority:2},
+    {pid:'P5', arrival_time:4, burst_time:2, priority:1},
+  ];
+  pidCounter = 6;
+  document.getElementById('inPid').value = 'P6';
+  renderTable();
+  toast('Demo processes loaded!', 'success');
+}
+
+async function runSimulate() {
+  if (!processes.length) { toast('Add at least one process.'); return; }
+  setLoading(true);
+  try {
+    const res = await fetch('/api/simulate', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        processes,
+        algo:            document.getElementById('algo').value,
+        quantum:         parseInt(document.getElementById('quantum').value),
+        starv_threshold: parseInt(document.getElementById('starvThreshold').value),
+        aging_boost:     parseInt(document.getElementById('agingBoost').value),
+      })
+    });
+    const d = await res.json();
+    if (d.error) { toast(d.error); return; }
+    renderSim(d);
+  } catch(e) { toast('Cannot reach scheduler backend.'); }
+  finally { setLoading(false); }
+}
+
+async function runCompare() {
+  if (!processes.length) { toast('Add at least one process.'); return; }
+  setLoading(true);
+  try {
+    const res = await fetch('/api/compare', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        processes,
+        starv_threshold: parseInt(document.getElementById('starvThreshold').value),
+        aging_boost:     parseInt(document.getElementById('agingBoost').value),
+      })
+    });
+    const d = await res.json();
+    if (d.error) { toast(d.error); return; }
+    renderCmp(d);
+  } catch(e) { toast('Cannot reach scheduler backend.'); }
+  finally { setLoading(false); }
+}
+
+function renderSim(data) {
+  show('simView'); hide('cmpView');
+  reAnim();
+
+  const algoName = data.algorithm || 'Unknown';
+  document.getElementById('algoLabel').textContent = algoName;
+  document.getElementById('timeLabel').textContent = `Total: ${data.metrics?.total_time ?? '—'} units`;
+
+  // Show dynamic quantum badge if RR
+  const qLabel = document.getElementById('quantumLabel');
+  if (data.quantum > 0) {
+    qLabel.textContent = `Quantum: ${data.quantum}`;
+    qLabel.style.display = '';
+  } else {
+    qLabel.style.display = 'none';
+  }
+
+  buildGantt(data.gantt || [], data.processes || []);
+
+  const m = data.metrics || {};
+
+  // Jain's Fairness Index display with bar
+  const jfi = parseFloat(m.jains_fairness_index || 0);
+  const jfiPct = (jfi * 100).toFixed(1);
+  const jfiColor = jfi >= 0.9 ? 'green' : jfi >= 0.7 ? '' : 'pink';
+
+  document.getElementById('metricsRow').innerHTML = [
+    {l:'Avg Turnaround',    v:(m.avg_turnaround_time||0).toFixed(2),   u:'u',   c:''},
+    {l:'Avg Waiting',       v:(m.avg_waiting_time||0).toFixed(2),      u:'u',   c:'pink'},
+    {l:'Avg Response',      v:(m.avg_response_time||0).toFixed(2),     u:'u',   c:''},
+    {l:'CPU Utilization',   v:(m.cpu_utilization||0).toFixed(1),       u:'%',   c:'green'},
+    {l:'Throughput',        v:(m.throughput||0).toFixed(3),            u:'/u',  c:''},
+    {l:'Context Switches',  v:m.context_switches||0,                   u:'',    c:'amber'},
+    {l:'CS Rate',           v:(m.context_switch_rate||0).toFixed(3),   u:'/u',  c:'amber'},
+    {l:'System Load',       v:(m.system_load||0).toFixed(3),           u:'/u',  c:''},
+    {l:'Total Time',        v:m.total_time||0,                         u:'u',   c:'green'},
+    {l:'Idle Time',         v:m.idle_time||0,                          u:'u',   c:''},
+  ].map(x => `
+    <div class="metric-card">
+      <div class="metric-num ${x.c}">${x.v}<span class="metric-unit">${x.u}</span></div>
+      <div class="metric-label">${x.l}</div>
+    </div>`).join('') +
+    // Jain's Fairness Index as special card with bar
+    `<div class="metric-card" style="grid-column:span 2">
+      <div class="metric-num ${jfiColor}">${jfi.toFixed(4)}<span class="metric-unit"></span></div>
+      <div class="metric-label">Jain's Fairness Index</div>
+      <div class="fairness-bar-wrap">
+        <div class="fairness-bar-bg"><div class="fairness-bar-fill" style="--tw:${jfiPct}%"></div></div>
+        <div class="fairness-label">${jfiPct}% — ${jfi>=0.9?'Excellent fairness':jfi>=0.7?'Good fairness':'Low fairness — starvation risk'}</div>
+      </div>
+    </div>`;
+
+  setTimeout(animateMetrics, 80);
+
+  // Adaptive decision engine panel
+  const dec = data.adaptive_decision;
+  if (dec) {
+    document.getElementById('decisionPanel').style.display = '';
+    document.getElementById('decisionGrid').innerHTML = [
+      {l:'Avg Burst',           v: parseFloat(dec.avg_burst||0).toFixed(2)           + ' u'},
+      {l:'Burst Variance',      v: parseFloat(dec.burst_variance||0).toFixed(2)},
+      {l:'Priority Spread',     v: dec.priority_spread},
+      {l:'System Load',         v: parseFloat(dec.system_load||0).toFixed(4)         + ' p/u'},
+      {l:'CS Rate (est.)',      v: parseFloat(dec.context_switch_rate||0).toFixed(4) + ' /u'},
+      {l:'Wait Threshold',      v: parseFloat(dec.waiting_time_threshold||0).toFixed(1) + ' u'},
+      {l:'Dynamic Quantum',     v: dec.quantum + ' u'},
+    ].map(x => `<div class="dec-item"><div class="dec-label">${x.l}</div><div class="dec-val">${x.v}</div></div>`).join('');
+    document.getElementById('decisionReason').textContent = dec.reason || '';
+  } else {
+    document.getElementById('decisionPanel').style.display = 'none';
+  }
+
+  // Per-process results table
+  const procs = data.processes || [];
+  const tats = procs.map(p => p.turnaround_time || 0);
+  const wts  = procs.map(p => p.waiting_time || 0);
+  const minTat = Math.min(...tats), maxTat = Math.max(...tats);
+  const minWt  = Math.min(...wts),  maxWt  = Math.max(...wts);
+  document.getElementById('procResults').innerHTML = procs.map(p => `
+    <tr>
+      <td><span class="pid-tag">${p.pid}</span></td>
+      <td>${p.arrival_time}</td>
+      <td>${p.burst_time}</td>
+      <td>${p.completion_time ?? '—'}</td>
+      <td class="${p.turnaround_time===minTat?'good':p.turnaround_time===maxTat?'bad':''}">${p.turnaround_time ?? '—'}</td>
+      <td class="${p.waiting_time===minWt?'good':p.waiting_time===maxWt?'bad':''}">${p.waiting_time ?? '—'}</td>
+      <td>${p.response_time ?? '—'}</td>
+    </tr>`).join('');
+}
+
+function buildGantt(gantt, procs) {
+  if (!gantt.length) {
+    document.getElementById('ganttInner').innerHTML = '<div style="color:var(--text-muted);padding:20px;font-size:13px">No Gantt data returned.</div>';
+    return;
+  }
+  const pidList  = [...new Set(procs.map(p => p.pid))];
+  const cm       = {};
+  pidList.forEach((pid, i) => cm[pid] = i % GRADIENTS.length);
+  const totalTime = Math.max(...gantt.map(s => s.end));
+  const PPU = Math.max(16, Math.min(64, 680 / totalTime));
+
+  const byPid = {};
+  pidList.forEach(pid => byPid[pid] = []);
+  gantt.forEach(s => { if (byPid[s.pid]) byPid[s.pid].push(s); });
+
+  let html = '';
+  let segIdx = 0;
+  pidList.forEach(pid => {
+    const segs = (byPid[pid] || []).sort((a, b) => a.start - b.start);
+    html += `<div class="g-row"><div class="g-label">${pid}</div><div class="g-track">`;
+    let cur = 0;
+    segs.forEach(s => {
+      if (s.start > cur) {
+        const w = (s.start - cur) * PPU;
+        html += `<div class="g-seg g-idle" style="width:${w}px" title="Idle"></div>`;
+      }
+      const w = (s.end - s.start) * PPU;
+      const delay = (segIdx * 60) + 'ms';
+      html += `<div class="g-seg g-seg-anim" style="width:${w}px;background:${GRADIENTS[cm[pid]]};animation-delay:${delay}" title="${pid}: ${s.start}–${s.end}">${w > 22 ? pid : ''}</div>`;
+      cur = s.end; segIdx++;
+    });
+    if (cur < totalTime) {
+      const w = (totalTime - cur) * PPU;
+      html += `<div class="g-seg g-idle" style="width:${w}px"></div>`;
+    }
+    html += `</div></div>`;
+  });
+
+  const step = totalTime <= 20 ? 1 : totalTime <= 60 ? 5 : 10;
+  html += `<div class="g-ticks">`;
+  for (let t = 0; t <= totalTime; t += step)
+    html += `<div class="g-tick" style="width:${step * PPU}px">${t}</div>`;
+  html += `</div>`;
+
+  document.getElementById('ganttInner').innerHTML = html;
+  document.getElementById('ganttLegend').innerHTML = pidList.map(pid => `
+    <div class="g-legend-item">
+      <div class="g-swatch" style="background:${SOLIDS[cm[pid]]}"></div>${pid}
+    </div>`).join('');
+}
+
+function renderCmp(data) {
+  show('cmpView'); hide('simView');
+  const algos  = Object.keys(data);
+  const fields = ['avg_turnaround_time','avg_waiting_time','avg_response_time','throughput','cpu_utilization','jains_fairness_index','context_switches'];
+  const best = {}, worst = {};
+  fields.forEach(f => {
+    const vals = algos.filter(a => !data[a].error).map(a => parseFloat(data[a][f] || 0));
+    const hiGood = f === 'throughput' || f === 'cpu_utilization' || f === 'jains_fairness_index';
+    const loGood = f === 'context_switches';
+    best[f]  = (hiGood || loGood) ? (loGood ? Math.min(...vals) : Math.max(...vals)) : Math.min(...vals);
+    worst[f] = (hiGood || loGood) ? (loGood ? Math.max(...vals) : Math.min(...vals)) : Math.max(...vals);
+  });
+  document.getElementById('cmpBody').innerHTML = algos.map(algo => {
+    const r = data[algo];
+    if (r.error) return `<tr><td>${algo}</td><td colspan="7" style="color:var(--text-dim);text-align:left;font-family:var(--sans)">Error: ${r.error}</td></tr>`;
+    return `<tr><td>${algo}</td>${fields.map(f => {
+      const v = parseFloat(r[f] || 0);
+      const c = v === best[f] ? 'cv-best' : v === worst[f] ? 'cv-worst' : '';
+      const disp = f === 'jains_fairness_index' ? v.toFixed(4) : f === 'context_switches' ? v.toFixed(0) : v.toFixed(2);
+      return `<td class="${c}">${disp}</td>`;
+    }).join('')}</tr>`;
+  }).join('');
+}
+
+function setLoading(on) {
+  document.getElementById('loader').classList.toggle('active', on);
+  if (on) { hide('simView'); hide('cmpView'); hide('placeholder'); }
+  document.getElementById('statusTxt').textContent = on ? 'RUNNING...' : 'READY';
+}
+function show(id) { document.getElementById(id).classList.remove('hidden'); document.getElementById('placeholder').classList.add('hidden'); }
+function hide(id) { document.getElementById(id).classList.add('hidden'); }
+function reAnim() {
+  ['d1','d2','d3','d4'].forEach(c => document.querySelectorAll('.'+c).forEach(el => {
+    el.style.animation = 'none'; el.offsetHeight; el.style.animation = '';
+  }));
+}
+function toast(msg, type='error') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'show' + (type === 'success' ? ' success' : '');
+  clearTimeout(t._t);
+  t._t = setTimeout(() => t.className = '', 3400);
+}
+
+// ── Count-up animation for metric numbers ────────────────────────────────────
+function countUp(el, target, decimals, duration = 900) {
+  const start = performance.now();
+  function step(now) {
+    const p    = Math.min((now - start) / duration, 1);
+    const ease = 1 - Math.pow(1 - p, 3);
+    el.textContent = (target * ease).toFixed(decimals);
+    if (p < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+function animateMetrics() {
+  document.querySelectorAll('.metric-num').forEach(el => {
+    const unit = el.querySelector('.metric-unit');
+    const unitTxt = unit ? unit.textContent : '';
+    const raw = el.textContent.replace(unitTxt, '').trim();
+    const val = parseFloat(raw);
+    if (isNaN(val)) return;
+    const dec = raw.includes('.') ? raw.split('.')[1].length : 0;
+    const txt = document.createTextNode((0).toFixed(dec));
+    el.textContent = '';
+    el.appendChild(txt);
+    if (unit) el.appendChild(unit);
+    countUp(txt, val, dec);
+  });
+}
+
+// ── Particle system ───────────────────────────────────────────────────────────
+(function initParticles() {
+  const canvas = document.getElementById('particle-canvas');
+  const ctx    = canvas.getContext('2d');
+  let W, H, particles = [];
+  const COLORS = ['#a855f7','#60a5fa','#67e8f9','#8b5cf6','#f472b6'];
+
+  function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+
+  function spawn() {
+    return {
+      x: Math.random()*W, y: Math.random()*H,
+      r: Math.random()*1.2+0.3,
+      vx:(Math.random()-0.5)*0.18, vy:(Math.random()-0.5)*0.18,
+      alpha: Math.random()*0.45+0.08,
+      color: COLORS[Math.floor(Math.random()*COLORS.length)],
+      pulse: Math.random()*Math.PI*2,
+    };
+  }
+
+  function init() { resize(); particles = Array.from({length:110}, spawn); }
+
+  function draw() {
+    ctx.clearRect(0,0,W,H);
+    particles.forEach(p => {
+      p.pulse += 0.013;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = p.alpha*(0.65+0.35*Math.sin(p.pulse));
+      ctx.fill();
+      p.x += p.vx; p.y += p.vy;
+      if (p.x < 0) p.x = W; if (p.x > W) p.x = 0;
+      if (p.y < 0) p.y = H; if (p.y > H) p.y = 0;
+    });
+    ctx.globalAlpha = 1;
+    requestAnimationFrame(draw);
+  }
+
+  window.addEventListener('resize', resize);
+  init(); draw();
+})();
+
+renderTable();
+</script>
+</body>
+</html>

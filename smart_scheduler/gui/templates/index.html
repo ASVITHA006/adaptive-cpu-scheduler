@@ -1,0 +1,1691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Smart Scheduler — Adaptive CPU Scheduling Framework</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+/* ═══════════════════════════════════════════════════════
+   DESIGN LANGUAGE: Terminal-grade industrial — dark base,
+   amber/green phosphor accents, monospaced precision.
+   Feels like a real OS profiler tool, not a student demo.
+═══════════════════════════════════════════════════════ */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --bg:          #0a0c0f;
+  --bg1:         #0f1217;
+  --bg2:         #141820;
+  --bg3:         #1a2030;
+  --border:      #1e2535;
+  --border2:     #252e42;
+  --text:        #c8d0e0;
+  --text-dim:    #5a6480;
+  --text-bright: #e8f0ff;
+  --amber:       #f5a623;
+  --amber-dim:   #7a5312;
+  --green:       #39d98a;
+  --green-dim:   #1a5c3a;
+  --blue:        #4d9ef7;
+  --blue-dim:    #1a3a6a;
+  --red:         #f7524d;
+  --red-dim:     #5c1f1d;
+  --purple:      #b57bee;
+  --purple-dim:  #3d2266;
+  --cyan:        #31d0e8;
+  --mono:        'JetBrains Mono', monospace;
+  --sans:        'Space Grotesk', sans-serif;
+  --radius:      6px;
+  --radius-lg:   10px;
+  --glow-amber:  0 0 12px rgba(245,166,35,0.25);
+  --glow-green:  0 0 12px rgba(57,217,138,0.2);
+  --glow-blue:   0 0 12px rgba(77,158,247,0.2);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.6;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Scanline texture */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background: repeating-linear-gradient(
+    0deg, transparent, transparent 2px,
+    rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px
+  );
+  pointer-events: none;
+  z-index: 1000;
+}
+
+/* ── Layout ─────────────────────────────── */
+.shell {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  grid-template-rows: 56px 1fr;
+  min-height: 100vh;
+}
+
+/* ── Top bar ────────────────────────────── */
+.topbar {
+  grid-column: 1 / -1;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 20px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.topbar-logo {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--amber);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.topbar-logo span { color: var(--text-dim); font-weight: 300; }
+.topbar-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 2px 8px;
+  border: 1px solid var(--amber-dim);
+  color: var(--amber);
+  border-radius: 3px;
+  letter-spacing: 0.1em;
+}
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.status-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: var(--glow-green);
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%,100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.status-label { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+
+/* ── Sidebar ────────────────────────────── */
+.sidebar {
+  background: var(--bg1);
+  border-right: 1px solid var(--border);
+  padding: 20px 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.section-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  padding: 0 4px;
+  margin-bottom: 8px;
+}
+
+/* Control groups */
+.ctrl-group { display: flex; flex-direction: column; gap: 10px; }
+
+.ctrl label {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+  letter-spacing: 0.05em;
+}
+
+.ctrl select, .ctrl input[type=number], .ctrl input[type=text] {
+  width: 100%;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  color: var(--text-bright);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  outline: none;
+  transition: border-color .2s, box-shadow .2s;
+  -webkit-appearance: none;
+}
+.ctrl select:focus, .ctrl input:focus {
+  border-color: var(--amber);
+  box-shadow: var(--glow-amber);
+}
+.ctrl select option { background: var(--bg2); }
+
+/* Buttons */
+.btn {
+  width: 100%;
+  padding: 9px 16px;
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+  background: var(--bg2);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all .2s;
+  text-align: center;
+}
+.btn:hover { border-color: var(--amber); color: var(--amber); background: rgba(245,166,35,.06); }
+.btn-primary {
+  background: rgba(245,166,35,.12);
+  border-color: var(--amber);
+  color: var(--amber);
+  font-weight: 600;
+}
+.btn-primary:hover { background: rgba(245,166,35,.22); box-shadow: var(--glow-amber); }
+.btn-compare {
+  background: rgba(77,158,247,.08);
+  border-color: var(--blue);
+  color: var(--blue);
+}
+.btn-compare:hover { background: rgba(77,158,247,.18); box-shadow: var(--glow-blue); }
+.btn-group { display: flex; flex-direction: column; gap: 8px; }
+
+/* Process table editor */
+.proc-editor {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.proc-editor-head {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr 28px;
+  gap: 0;
+  background: var(--bg3);
+  padding: 5px 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.proc-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr 28px;
+  gap: 0;
+  border-top: 1px solid var(--border);
+  padding: 4px 8px;
+  align-items: center;
+}
+.proc-row input {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  width: 100%;
+  padding: 2px 4px;
+  outline: none;
+}
+.proc-row input:focus { background: rgba(255,255,255,.04); border-radius: 3px; }
+.proc-row .del-btn {
+  background: none; border: none;
+  color: var(--text-dim); cursor: pointer;
+  font-size: 14px; padding: 0; width: 20px;
+  transition: color .15s;
+}
+.proc-row .del-btn:hover { color: var(--red); }
+
+/* ── Main content ───────────────────────── */
+.main {
+  overflow-y: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Cards */
+.card {
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.card-header {
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg2);
+}
+.card-title {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-bright);
+}
+.card-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  margin-left: auto;
+}
+.badge-amber { background: var(--amber-dim); color: var(--amber); }
+.badge-green { background: var(--green-dim); color: var(--green); }
+.badge-blue  { background: var(--blue-dim);  color: var(--blue); }
+.badge-red   { background: var(--red-dim);   color: var(--red); }
+.badge-purple{ background: var(--purple-dim);color: var(--purple); }
+.card-body { padding: 18px; }
+
+/* Metric grid */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+}
+.metric-tile {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  position: relative;
+  overflow: hidden;
+}
+.metric-tile::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--tile-color, var(--amber));
+}
+.metric-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 6px;
+}
+.metric-value {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--tile-color, var(--amber));
+  line-height: 1;
+}
+.metric-unit {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+/* Gantt chart */
+.gantt-wrap {
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+.gantt-container {
+  position: relative;
+  min-width: 600px;
+}
+.gantt-row {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  margin-bottom: 4px;
+  gap: 0;
+}
+.gantt-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  width: 36px;
+  flex-shrink: 0;
+  text-align: right;
+  padding-right: 8px;
+}
+.gantt-track {
+  flex: 1;
+  display: flex;
+  height: 100%;
+  position: relative;
+  background: rgba(255,255,255,.02);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.gantt-seg {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--bg);
+  border-right: 1px solid rgba(0,0,0,.3);
+  flex-shrink: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  cursor: default;
+  transition: filter .15s;
+  position: relative;
+}
+.gantt-seg:hover { filter: brightness(1.2); z-index: 2; }
+.gantt-seg.idle { background: rgba(255,255,255,.07); color: var(--text-dim); }
+.gantt-time-axis {
+  display: flex;
+  margin-left: 36px;
+  margin-top: 4px;
+  position: relative;
+}
+.gantt-tick {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  position: absolute;
+  transform: translateX(-50%);
+}
+
+/* Process table */
+.proc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.proc-table th {
+  padding: 8px 12px;
+  text-align: left;
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+}
+.proc-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255,255,255,.03);
+  color: var(--text);
+}
+.proc-table tr:last-child td { border-bottom: none; }
+.proc-table tr:hover td { background: rgba(255,255,255,.025); }
+.proc-table td.hi { color: var(--amber); font-weight: 600; }
+.proc-table td.ok { color: var(--green); }
+.proc-table td.bad { color: var(--red); }
+
+/* Comparison table */
+.cmp-table-wrap { overflow-x: auto; }
+.cmp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 12px;
+  min-width: 700px;
+}
+.cmp-table th {
+  padding: 10px 14px;
+  text-align: left;
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-bottom: 2px solid var(--border);
+  white-space: nowrap;
+}
+.cmp-table td {
+  padding: 9px 14px;
+  border-bottom: 1px solid rgba(255,255,255,.03);
+  white-space: nowrap;
+}
+.cmp-table tr.best-row td { background: rgba(57,217,138,.06); }
+.cmp-table tr.best-row td:first-child { border-left: 2px solid var(--green); }
+.cmp-table td.cell-best { color: var(--green); font-weight: 700; }
+.cmp-table td.cell-worst { color: var(--red-dim); }
+.cmp-crown { color: var(--amber); margin-left: 4px; }
+
+/* Decision engine */
+.decision-box {
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.decision-algo {
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--amber);
+  margin-bottom: 4px;
+}
+.decision-reason {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.score-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.score-bar-algo {
+  font-family: var(--mono);
+  font-size: 11px;
+  width: 90px;
+  color: var(--text);
+  flex-shrink: 0;
+}
+.score-bar-track {
+  flex: 1;
+  height: 10px;
+  background: var(--bg3);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.score-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width .6s cubic-bezier(.4,0,.2,1);
+}
+.score-bar-val {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  width: 36px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.score-bar-reason {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* Fairness gauge */
+.fairness-wrap {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+.fairness-arc { position: relative; width: 120px; height: 70px; }
+.fairness-arc svg { overflow: visible; }
+.fairness-number {
+  position: absolute;
+  bottom: 4px; left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--green);
+}
+.fairness-info { flex: 1; }
+.fairness-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 4px;
+}
+.fairness-desc { font-size: 12px; color: var(--text-dim); }
+
+/* Aging / starvation log */
+.log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.log-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 6px 10px;
+  background: var(--bg2);
+  border-radius: var(--radius);
+  border-left: 2px solid var(--border2);
+}
+.log-entry.aging  { border-color: var(--purple); }
+.log-entry.starv  { border-color: var(--red); }
+.log-time  { color: var(--text-dim); width: 48px; flex-shrink: 0; }
+.log-pid   { color: var(--amber); font-weight: 600; width: 32px; flex-shrink: 0; }
+.log-msg   { color: var(--text); flex: 1; }
+
+/* Quantum info */
+.quantum-diff {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.q-val {
+  font-size: 24px;
+  font-weight: 700;
+}
+.q-arrow { color: var(--text-dim); font-size: 20px; }
+
+/* Charts area */
+.charts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.chart-card { background: var(--bg2); border-radius: var(--radius); padding: 14px; }
+.chart-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  margin-bottom: 10px;
+}
+
+/* Workload stats bar */
+.wl-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.wl-item { display: flex; flex-direction: column; gap: 2px; }
+.wl-key { color: var(--text-dim); font-size: 10px; }
+.wl-val { color: var(--amber); font-weight: 600; font-size: 13px; }
+
+/* Empty / loading states */
+.empty-state {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.empty-state .big { font-size: 32px; margin-bottom: 12px; opacity: .4; }
+
+.loading-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(10,12,15,.75);
+  z-index: 500;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 16px;
+}
+.loading-overlay.show { display: flex; }
+.spinner {
+  width: 36px; height: 36px;
+  border: 2px solid var(--border2);
+  border-top-color: var(--amber);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { font-family: var(--mono); font-size: 12px; color: var(--amber); }
+
+/* Tabs */
+.tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); }
+.tab {
+  padding: 10px 18px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all .15s;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--amber); border-bottom-color: var(--amber); }
+
+.tab-content { display: none; padding: 18px; }
+.tab-content.active { display: block; }
+
+/* Error box */
+.error-box {
+  background: var(--red-dim);
+  border: 1px solid var(--red);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--red);
+}
+
+/* Tooltip */
+[data-tip] { position: relative; cursor: default; }
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: 120%; left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 5px 9px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .15s;
+  z-index: 200;
+}
+[data-tip]:hover::after { opacity: 1; }
+
+/* Animated gantt segments */
+@keyframes seg-in {
+  from { opacity: 0; transform: scaleX(0); transform-origin: left; }
+  to   { opacity: 1; transform: scaleX(1); }
+}
+.gantt-seg { animation: seg-in .35s ease-out both; }
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+/* RR quantum display */
+.rr-info-row {
+  display: flex; gap: 20px; flex-wrap: wrap;
+  background: var(--bg2); border-radius: var(--radius);
+  padding: 12px 16px; margin-top: 10px;
+}
+.rr-item { display: flex; flex-direction: column; gap: 2px; }
+.rr-key  { font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+.rr-val  { font-family: var(--mono); font-size: 16px; font-weight: 700; color: var(--cyan); }
+
+/* Multi-gantt in compare mode */
+.cmp-gantt-row {
+  margin-bottom: 12px;
+}
+.cmp-gantt-algo {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* Best highlight chips */
+.best-chip {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.best-chip.wait      { background: var(--blue-dim);   color: var(--blue); }
+.best-chip.fair      { background: var(--green-dim);  color: var(--green); }
+.best-chip.thru      { background: var(--purple-dim); color: var(--purple); }
+.best-chip.ctx       { background: rgba(49,208,232,.12); color: var(--cyan); }
+.best-chip.overall   { background: var(--amber-dim);  color: var(--amber); }
+</style>
+</head>
+<body>
+<!-- Loading overlay -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <div class="loading-text" id="loadingText">Running scheduler...</div>
+</div>
+
+<div class="shell">
+  <!-- ── Top Bar ─────────────────────────────────── -->
+  <header class="topbar">
+    <div class="topbar-logo">Smart<span>Scheduler</span></div>
+    <div class="topbar-badge">v2.0</div>
+    <div class="topbar-badge" style="border-color:var(--blue-dim);color:var(--blue)">C++17 Core</div>
+    <div class="topbar-right">
+      <div class="status-dot" id="statusDot"></div>
+      <div class="status-label" id="statusLabel">READY</div>
+    </div>
+  </header>
+
+  <!-- ── Sidebar ────────────────────────────────── -->
+  <aside class="sidebar">
+    <!-- Algorithm selector -->
+    <div>
+      <div class="section-label">Algorithm</div>
+      <div class="ctrl-group">
+        <div class="ctrl">
+          <label>SCHEDULING ALGO</label>
+          <select id="algoSelect">
+            <option value="adaptive">★ Adaptive (Auto-Select)</option>
+            <option value="compare">⊞ Compare All Algorithms</option>
+            <option value="FCFS">FCFS</option>
+            <option value="SJF">SJF (Non-Preemptive)</option>
+            <option value="SRTF">SRTF (Preemptive)</option>
+            <option value="Priority">Priority (Non-Preemptive)</option>
+            <option value="PriorityP">Priority (Preemptive)</option>
+            <option value="RR">Round Robin</option>
+          </select>
+        </div>
+        <div class="ctrl" id="quantumCtrl" style="display:none">
+          <label>RR QUANTUM (0 = auto)</label>
+          <input type="number" id="quantumInput" value="0" min="0" max="50"/>
+        </div>
+      </div>
+    </div>
+
+    <!-- Parameters -->
+    <div>
+      <div class="section-label">Parameters</div>
+      <div class="ctrl-group">
+        <div class="ctrl">
+          <label>STARVATION THRESHOLD</label>
+          <input type="number" id="threshInput" value="15" min="1" max="100"/>
+        </div>
+        <div class="ctrl">
+          <label>AGING BOOST (per cycle)</label>
+          <input type="number" id="boostInput" value="1" min="1" max="10"/>
+        </div>
+      </div>
+    </div>
+
+    <!-- Workload generator -->
+    <div>
+      <div class="section-label">Workload</div>
+      <div class="ctrl-group">
+        <div class="ctrl">
+          <label>PRESET GENERATOR</label>
+          <select id="presetSelect">
+            <option value="">Custom (edit table below)</option>
+            <option value="random">Random (8 procs)</option>
+            <option value="heavy">Heavy Load (12 procs)</option>
+            <option value="light">Light / IO-Bound</option>
+            <option value="bursty">Bursty (extreme variance)</option>
+            <option value="uniform">Uniform Bursts</option>
+            <option value="edge">Edge Cases</option>
+          </select>
+        </div>
+        <div class="ctrl" id="seedCtrl">
+          <label>RNG SEED</label>
+          <input type="number" id="seedInput" value="42" min="0" max="9999"/>
+        </div>
+      </div>
+    </div>
+
+    <!-- Process editor (shown when preset = custom) -->
+    <div id="procEditorWrap">
+      <div class="section-label">Processes</div>
+      <div class="proc-editor">
+        <div class="proc-editor-head">
+          <span>ID</span><span>Arr</span><span>Burst</span><span>Pri</span><span></span>
+        </div>
+        <div id="procRows"></div>
+      </div>
+      <div style="margin-top:6px">
+        <button class="btn" onclick="addProcRow()" style="font-size:11px;padding:6px">+ Add Process</button>
+      </div>
+    </div>
+
+    <!-- Run buttons -->
+    <div class="btn-group" style="margin-top:auto">
+      <button class="btn btn-primary" id="runBtn" onclick="runScheduler()">▶ RUN SCHEDULER</button>
+      <button class="btn btn-compare" id="compareBtn" onclick="runCompare()">⊞ COMPARE ALL</button>
+    </div>
+  </aside>
+
+  <!-- ── Main Content ───────────────────────────── -->
+  <main class="main" id="mainContent">
+    <!-- Default empty state -->
+    <div class="empty-state" id="emptyState">
+      <div class="big">⚙</div>
+      <div style="color:var(--amber);margin-bottom:8px;font-size:15px">Smart Scheduler Ready</div>
+      <div>Configure a workload and press <span style="color:var(--amber)">RUN SCHEDULER</span></div>
+      <div style="margin-top:4px">or use <span style="color:var(--blue)">COMPARE ALL</span> to benchmark every algorithm</div>
+      <div style="margin-top:20px;color:var(--border2)">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</div>
+      <div style="margin-top:16px;font-size:11px;line-height:1.8;color:var(--text-dim)">
+        Algorithms: FCFS · SJF · SRTF · Priority · PriorityP · Round Robin<br/>
+        Features: Adaptive Selection · Jain's Fairness · Aging · Dynamic Quantum
+      </div>
+    </div>
+
+    <!-- Results (hidden until run) -->
+    <div id="resultsArea" style="display:none; flex-direction:column; gap:20px">
+
+      <!-- Error display -->
+      <div class="error-box" id="errorBox" style="display:none"></div>
+
+      <!-- ── Single Run View ─────────────────── -->
+      <div id="singleView">
+        <!-- Algorithm banner -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Algorithm</span>
+            <span class="card-badge badge-amber" id="algoNameBadge">—</span>
+          </div>
+          <div class="card-body">
+            <!-- Adaptive decision engine block -->
+            <div id="adaptiveDecisionBlock" style="display:none;margin-bottom:14px">
+              <div class="decision-box">
+                <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px">
+                  <span style="font-family:var(--mono);font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.1em">Engine Selected</span>
+                  <span class="decision-algo" id="decisionAlgo">—</span>
+                </div>
+                <div class="decision-reason" id="decisionReason">—</div>
+              </div>
+              <!-- Workload stats -->
+              <div class="wl-grid" id="wlStats" style="margin-bottom:14px"></div>
+              <!-- Scoring bars -->
+              <div class="section-label" style="margin-bottom:8px">ALGORITHM SCORES</div>
+              <div id="scoreBars"></div>
+            </div>
+            <!-- RR quantum info -->
+            <div id="rrQuantumInfo" style="display:none">
+              <div class="rr-info-row" id="rrInfoRow"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Performance metrics -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Performance Metrics</span>
+            <span class="card-badge badge-green" id="cpuUtilBadge">CPU —</span>
+          </div>
+          <div class="card-body">
+            <div class="metric-grid" id="metricGrid"></div>
+          </div>
+        </div>
+
+        <!-- Gantt Chart + Timeline -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Gantt Chart</span>
+            <span class="card-badge badge-blue" id="makespanBadge">Makespan —</span>
+          </div>
+          <div class="card-body">
+            <div class="gantt-wrap">
+              <div class="gantt-container" id="ganttChart"></div>
+            </div>
+            <!-- CPU busy/idle timeline bar -->
+            <div style="margin-top:14px">
+              <div class="section-label" style="margin-bottom:6px">CPU TIMELINE</div>
+              <div id="cpuTimeline" style="height:14px;border-radius:3px;overflow:hidden;display:flex"></div>
+              <div style="display:flex;gap:14px;margin-top:6px;font-family:var(--mono);font-size:10px;color:var(--text-dim)">
+                <span>■ <span style="color:var(--amber)">Busy</span></span>
+                <span>■ <span style="color:var(--border2)">Idle</span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Process metrics table -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Process Details</span>
+          </div>
+          <div class="card-body" style="padding:0">
+            <table class="proc-table">
+              <thead>
+                <tr>
+                  <th>PID</th><th>Arrival</th><th>Burst</th>
+                  <th>Priority</th><th>Wait</th><th>TAT</th>
+                  <th>Response</th><th>Finish</th><th>Pri Boosts</th>
+                </tr>
+              </thead>
+              <tbody id="procTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Fairness + Aging + Starvation -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <!-- Fairness -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Scheduling Fairness</span>
+              <span class="card-badge badge-green">Jain's Index</span>
+            </div>
+            <div class="card-body">
+              <div class="fairness-wrap">
+                <div class="fairness-arc">
+                  <svg width="120" height="70" viewBox="0 0 120 70">
+                    <path d="M10,65 A50,50,0,0,1,110,65" fill="none" stroke="var(--bg3)" stroke-width="10"/>
+                    <path id="fairnessArc" d="M10,65 A50,50,0,0,1,110,65"
+                          fill="none" stroke="var(--green)" stroke-width="10"
+                          stroke-dasharray="157" stroke-dashoffset="157"
+                          style="transition:stroke-dashoffset .8s ease"/>
+                  </svg>
+                  <div class="fairness-number" id="fairnessNum">—</div>
+                </div>
+                <div class="fairness-info">
+                  <div class="fairness-label">Jain's Fairness Index</div>
+                  <div class="fairness-desc" id="fairnessDesc">Measures equitable CPU distribution among all processes. 1.0 = perfectly fair.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Aging & Starvation log -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Aging & Starvation Log</span>
+              <span class="card-badge badge-purple" id="agingCountBadge">0 events</span>
+            </div>
+            <div class="card-body">
+              <div class="log-list" id="agingLog">
+                <div style="color:var(--text-dim);font-family:var(--mono);font-size:11px">No aging events.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Analytics Charts</span>
+          </div>
+          <div class="card-body">
+            <div class="charts-grid">
+              <div class="chart-card">
+                <div class="chart-title">Waiting Time per Process</div>
+                <canvas id="waitChart" height="160"></canvas>
+              </div>
+              <div class="chart-card">
+                <div class="chart-title">Turnaround Time per Process</div>
+                <canvas id="tatChart" height="160"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Comparison View ─────────────────── -->
+      <div id="compareView" style="display:none">
+        <!-- Summary chips -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Algorithm Comparison</span>
+            <span class="card-badge badge-amber" id="cmpBestBadge">Best: —</span>
+          </div>
+          <div class="card-body">
+            <!-- Adaptive decision summary -->
+            <div class="decision-box" id="cmpDecisionBox" style="margin-bottom:14px">
+              <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px">
+                <span style="font-family:var(--mono);font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.1em">Adaptive Engine Would Choose</span>
+                <span class="decision-algo" id="cmpDecisionAlgo">—</span>
+              </div>
+              <div class="decision-reason" id="cmpDecisionReason">—</div>
+            </div>
+
+            <div class="cmp-table-wrap">
+              <table class="cmp-table" id="cmpTable">
+                <thead>
+                  <tr>
+                    <th>Algorithm</th>
+                    <th>Avg Wait ↓</th>
+                    <th>Avg TAT ↓</th>
+                    <th>Avg RT ↓</th>
+                    <th>Ctx Sw ↓</th>
+                    <th>Fairness ↑</th>
+                    <th>CPU% ↑</th>
+                    <th>Throughput ↑</th>
+                  </tr>
+                </thead>
+                <tbody id="cmpTableBody"></tbody>
+              </table>
+            </div>
+
+            <!-- Radar chart -->
+            <div style="max-width:420px;margin:20px auto 0">
+              <canvas id="radarChart" height="300"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Multi-algo Gantt -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Gantt Charts — All Algorithms</span>
+          </div>
+          <div class="card-body">
+            <div id="cmpGantts"></div>
+          </div>
+        </div>
+
+        <!-- Bar chart comparison -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Metric Comparison Charts</span>
+          </div>
+          <div class="card-body">
+            <div class="charts-grid">
+              <div class="chart-card">
+                <div class="chart-title">Average Waiting Time</div>
+                <canvas id="cmpWaitChart" height="180"></canvas>
+              </div>
+              <div class="chart-card">
+                <div class="chart-title">Context Switches</div>
+                <canvas id="cmpCtxChart" height="180"></canvas>
+              </div>
+              <div class="chart-card">
+                <div class="chart-title">CPU Utilization %</div>
+                <canvas id="cmpCpuChart" height="180"></canvas>
+              </div>
+              <div class="chart-card">
+                <div class="chart-title">Fairness Index</div>
+                <canvas id="cmpFairChart" height="180"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /resultsArea -->
+  </main>
+</div><!-- /shell -->
+<script>
+// ═══════════════════════════════════════════════════════
+//  Smart Scheduler Dashboard — Frontend Logic
+// ═══════════════════════════════════════════════════════
+
+// ── State ────────────────────────────────────────────
+const PROC_COLORS = [
+  '#f5a623','#39d98a','#4d9ef7','#b57bee','#f7524d',
+  '#31d0e8','#ff8c42','#a8e6cf','#ffd3b6','#c9b1ff'
+];
+let procColorMap = {};
+let waitChartInst = null, tatChartInst = null;
+let radarChartInst = null;
+let cmpWaitInst = null, cmpCtxInst = null, cmpCpuInst = null, cmpFairInst = null;
+
+// Default process rows for the editor
+const defaultProcs = [
+  {id:'P1', arrival:0,  burst:6,  priority:2},
+  {id:'P2', arrival:1,  burst:4,  priority:1},
+  {id:'P3', arrival:2,  burst:8,  priority:3},
+  {id:'P4', arrival:3,  burst:2,  priority:1},
+  {id:'P5', arrival:4,  burst:5,  priority:4},
+  {id:'P6', arrival:5,  burst:10, priority:2},
+];
+
+// ── Init ─────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  defaultProcs.forEach(p => addProcRow(p));
+  document.getElementById('algoSelect').addEventListener('change', onAlgoChange);
+  document.getElementById('presetSelect').addEventListener('change', onPresetChange);
+  onAlgoChange();
+  onPresetChange();
+});
+
+function onAlgoChange() {
+  const algo = document.getElementById('algoSelect').value;
+  document.getElementById('quantumCtrl').style.display = (algo === 'RR') ? 'block' : 'none';
+}
+
+function onPresetChange() {
+  const preset = document.getElementById('presetSelect').value;
+  const editorWrap = document.getElementById('procEditorWrap');
+  const seedCtrl   = document.getElementById('seedCtrl');
+  editorWrap.style.display = preset ? 'none' : 'block';
+  seedCtrl.style.display   = preset ? 'block' : 'none';
+}
+
+// ── Process row editor ───────────────────────────────
+function addProcRow(data = {}) {
+  const rows = document.getElementById('procRows');
+  const count = rows.children.length + 1;
+  const d = { id: data.id || `P${count}`, arrival: data.arrival||0, burst: data.burst||5, priority: data.priority||1 };
+
+  const row = document.createElement('div');
+  row.className = 'proc-row';
+  row.innerHTML = `
+    <input type="text"   class="pid-in"  value="${d.id}"       maxlength="5"  placeholder="P${count}"/>
+    <input type="number" class="arr-in"  value="${d.arrival}"  min="0"/>
+    <input type="number" class="bur-in"  value="${d.burst}"    min="1"/>
+    <input type="number" class="pri-in"  value="${d.priority}" min="0"/>
+    <button class="del-btn" onclick="this.parentElement.remove()">✕</button>
+  `;
+  rows.appendChild(row);
+}
+
+function getCustomProcesses() {
+  const rows = document.querySelectorAll('.proc-row');
+  return Array.from(rows).map(row => ({
+    id:       row.querySelector('.pid-in').value.trim() || 'P?',
+    arrival:  parseInt(row.querySelector('.arr-in').value) || 0,
+    burst:    parseInt(row.querySelector('.bur-in').value) || 1,
+    priority: parseInt(row.querySelector('.pri-in').value) || 1,
+    type:     'CPU'
+  }));
+}
+
+// ── API helpers ──────────────────────────────────────
+function setLoading(on, text='Running scheduler...') {
+  document.getElementById('loadingOverlay').classList.toggle('show', on);
+  document.getElementById('loadingText').textContent = text;
+  document.getElementById('statusLabel').textContent = on ? 'RUNNING' : 'READY';
+}
+
+function setStatus(color, label) {
+  document.getElementById('statusDot').style.background = `var(--${color})`;
+  document.getElementById('statusLabel').textContent = label;
+}
+
+function buildPayload() {
+  const preset = document.getElementById('presetSelect').value;
+  const payload = {
+    algo:            document.getElementById('algoSelect').value,
+    quantum:         parseInt(document.getElementById('quantumInput').value) || 0,
+    starv_threshold: parseInt(document.getElementById('threshInput').value) || 15,
+    aging_boost:     parseInt(document.getElementById('boostInput').value) || 1,
+    seed:            parseInt(document.getElementById('seedInput').value) || 42,
+  };
+  if (preset) payload.generate = preset;
+  else        payload.processes = getCustomProcesses();
+  return payload;
+}
+
+async function runScheduler() {
+  const payload = buildPayload();
+  setLoading(true);
+  try {
+    const r = await fetch('/api/run', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await r.json();
+    setLoading(false);
+    if (data.error) { showError(data.error); return; }
+    renderSingle(data);
+    setStatus('green','DONE');
+  } catch(e) {
+    setLoading(false);
+    showError('Network error: ' + e.message);
+  }
+}
+
+async function runCompare() {
+  const payload = buildPayload();
+  payload.algo = 'compare';
+  setLoading(true, 'Running all algorithms...');
+  try {
+    const r = await fetch('/api/compare', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await r.json();
+    setLoading(false);
+    if (data.error) { showError(data.error); return; }
+    renderCompare(data);
+    setStatus('blue','COMPARED');
+  } catch(e) {
+    setLoading(false);
+    showError('Network error: ' + e.message);
+  }
+}
+
+// ── Color helpers ────────────────────────────────────
+function procColor(pid) {
+  if (pid === 'IDLE') return 'rgba(255,255,255,0.05)';
+  if (!procColorMap[pid]) {
+    const keys = Object.keys(procColorMap).length;
+    procColorMap[pid] = PROC_COLORS[keys % PROC_COLORS.length];
+  }
+  return procColorMap[pid];
+}
+
+function resetColors() { procColorMap = {}; }
+
+// ── Show/hide views ──────────────────────────────────
+function showResults(mode) {
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('errorBox').style.display   = 'none';
+  const ra = document.getElementById('resultsArea');
+  ra.style.display = 'flex';
+  document.getElementById('singleView').style.display  = (mode==='single')  ? 'block' : 'none';
+  document.getElementById('compareView').style.display = (mode==='compare') ? 'block' : 'none';
+}
+
+function showError(msg) {
+  document.getElementById('emptyState').style.display   = 'none';
+  const ra = document.getElementById('resultsArea');
+  ra.style.display = 'flex';
+  const eb = document.getElementById('errorBox');
+  eb.style.display = 'block';
+  eb.textContent   = '⚠ ' + msg;
+  setStatus('red','ERROR');
+}
+
+// ════════════════════════════════════════════════════
+//  SINGLE RUN RENDERER
+// ════════════════════════════════════════════════════
+function renderSingle(data) {
+  resetColors();
+  showResults('single');
+
+  // Pre-assign colors for all pids
+  (data.processes||[]).forEach(p => procColor(p.id));
+
+  // ── Algorithm name ──────────────────────────────
+  document.getElementById('algoNameBadge').textContent = data.algorithm;
+
+  // ── Adaptive decision block ─────────────────────
+  const dec = data.adaptive_decision;
+  const decBlock = document.getElementById('adaptiveDecisionBlock');
+  if (dec) {
+    decBlock.style.display = 'block';
+    document.getElementById('decisionAlgo').textContent   = dec.chosen;
+    document.getElementById('decisionReason').textContent = dec.reasoning;
+    // Workload stats
+    if (dec.workload) {
+      const wl = dec.workload;
+      document.getElementById('wlStats').innerHTML = `
+        <div class="wl-item"><div class="wl-key">AVG BURST</div><div class="wl-val">${wl.avg_burst?.toFixed(1)||'—'}</div></div>
+        <div class="wl-item"><div class="wl-key">VARIANCE</div><div class="wl-val">${wl.burst_variance?.toFixed(1)||'—'}</div></div>
+        <div class="wl-item"><div class="wl-key">SYSTEM LOAD</div><div class="wl-val">${wl.system_load?.toFixed(2)||'—'}</div></div>
+        <div class="wl-item"><div class="wl-key">PRI SPREAD</div><div class="wl-val">${wl.priority_spread??'—'}</div></div>
+        <div class="wl-item"><div class="wl-key">PROCESSES</div><div class="wl-val">${wl.process_count||'—'}</div></div>
+        <div class="wl-item"><div class="wl-key">IO RATIO</div><div class="wl-val">${((wl.io_ratio||0)*100).toFixed(0)}%</div></div>
+      `;
+    }
+    // Scoring bars
+    const maxScore = Math.max(...(dec.scoring_table||[]).map(s=>s.score));
+    const minScore = Math.min(...(dec.scoring_table||[]).map(s=>s.score));
+    const range    = maxScore - minScore || 1;
+    document.getElementById('scoreBars').innerHTML =
+      (dec.scoring_table||[]).map(sc => {
+        const pct  = Math.max(5, ((sc.score - minScore) / range) * 100);
+        const isW  = sc.algorithm === dec.chosen;
+        const clr  = isW ? 'var(--amber)' : 'var(--blue)';
+        return `
+          <div class="score-bar-row">
+            <div class="score-bar-algo" style="${isW?'color:var(--amber);font-weight:600':''}">
+              ${isW?'▶ ':'  '}${sc.algorithm}
+            </div>
+            <div class="score-bar-track">
+              <div class="score-bar-fill" style="width:${pct}%;background:${clr}"></div>
+            </div>
+            <div class="score-bar-val">${sc.score.toFixed(0)}</div>
+          </div>
+          <div style="font-size:10px;color:var(--text-dim);padding-left:90px;margin-bottom:8px;font-family:var(--mono)">${sc.reason}</div>
+        `;
+      }).join('');
+  } else {
+    decBlock.style.display = 'none';
+  }
+
+  // ── RR quantum info ─────────────────────────────
+  const rrInfo = document.getElementById('rrQuantumInfo');
+  if (data.algorithm?.includes('RR') && data.final_quantum > 0) {
+    rrInfo.style.display = 'block';
+    document.getElementById('rrInfoRow').innerHTML = `
+      <div class="rr-item"><div class="rr-key">INITIAL QUANTUM</div><div class="rr-val">${data.initial_quantum||'auto'}</div></div>
+      <div class="rr-item"><div class="rr-key">COMPUTED QUANTUM</div><div class="rr-val" style="color:var(--amber)">${data.final_quantum}</div></div>
+      <div class="rr-item"><div class="rr-key">CONTEXT SWITCHES</div><div class="rr-val" style="color:var(--red)">${data.context_switches}</div></div>
+      <div class="rr-item"><div class="rr-key">CS RATE</div><div class="rr-val" style="color:var(--text-dim)">${(data.context_switch_rate||0).toFixed(3)}/t</div></div>
+    `;
+  } else {
+    rrInfo.style.display = 'none';
+  }
+
+  // ── Metrics grid ────────────────────────────────
+  const cpuPct = (data.cpu_utilization||0).toFixed(1);
+  document.getElementById('cpuUtilBadge').textContent = `CPU ${cpuPct}%`;
+  document.getElementById('metricGrid').innerHTML = [
+    {label:'Avg Waiting', val: (data.avg_waiting_time||0).toFixed(2), unit:'time units', color:'--amber'},
+    {label:'Avg TAT',     val: (data.avg_turnaround_time||0).toFixed(2), unit:'time units', color:'--blue'},
+    {label:'Avg Response',val: (data.avg_response_time||0).toFixed(2),   unit:'time units', color:'--cyan'},
+    {label:'CPU Util',    val: cpuPct + '%',  unit:'efficiency', color:'--green'},
+    {label:'Throughput',  val: (data.throughput||0).toFixed(3), unit:'proc/unit', color:'--purple'},
+    {label:'Ctx Switches',val: data.context_switches||0, unit:'preemptions', color:'--red'},
+    {label:'Idle Time',   val: data.total_idle_time||0,  unit:'time units', color:'--text-dim'},
+    {label:'Makespan',    val: data.makespan||0,          unit:'total span', color:'--text'},
+  ].map(m => `
+    <div class="metric-tile" style="--tile-color:var(${m.color})">
+      <div class="metric-label">${m.label}</div>
+      <div class="metric-value">${m.val}</div>
+      <div class="metric-unit">${m.unit}</div>
+    </div>
+  `).join('');
+
+  // ── Gantt chart ─────────────────────────────────
+  document.getElementById('makespanBadge').textContent = `Makespan ${data.makespan||'?'}`;
+  renderGantt('ganttChart', data.timeline||[], data.makespan||0);
+
+  // ── CPU timeline bar ────────────────────────────
+  renderCpuTimeline(data.timeline||[], data.makespan||1);
+
+  // ── Process table ───────────────────────────────
+  const procs = data.processes||[];
+  const minWait = Math.min(...procs.map(p=>p.waiting_time));
+  const maxWait = Math.max(...procs.map(p=>p.waiting_time));
+  document.getElementById('procTableBody').innerHTML = procs.map(p => `
+    <tr>
+      <td style="color:${procColor(p.id)};font-weight:700">${p.id}</td>
+      <td>${p.arrival_time}</td>
+      <td>${p.burst_time}</td>
+      <td>${p.priority}${p.priority_boosts>0 ? ` <span style="color:var(--purple);font-size:10px">(→${p.effective_priority})</span>` : ''}</td>
+      <td class="${p.waiting_time===minWait?'ok':p.waiting_time===maxWait?'bad':''}">${p.waiting_time}</td>
+      <td>${p.turnaround_time}</td>
+      <td>${p.response_time}</td>
+      <td>${p.finish_time}</td>
+      <td>${p.priority_boosts>0 ? `<span style="color:var(--purple)">+${p.priority_boosts}</span>` : '—'}</td>
+    </tr>
+  `).join('');
+
+  // ── Fairness gauge ──────────────────────────────
+  const fi = data.fairness_index||0;
+  document.getElementById('fairnessNum').textContent = fi.toFixed(3);
+  const arcLen  = 157; // semicircle circumference
+  const offset  = arcLen - (fi * arcLen);
+  const arcEl   = document.getElementById('fairnessArc');
+  arcEl.setAttribute('stroke-dashoffset', offset.toFixed(1));
+  arcEl.setAttribute('stroke', fi > 0.8 ? 'var(--green)' : fi > 0.5 ? 'var(--amber)' : 'var(--red)');
+  document.getElementById('fairnessDesc').textContent =
+    fi > 0.9 ? 'Excellent — CPU time distributed very equitably.' :
+    fi > 0.7 ? 'Good — Minor imbalances present.' :
+    fi > 0.5 ? 'Moderate — Some processes experience unfair treatment.' :
+               'Poor — Significant starvation risk detected.';
+
+  // ── Aging / starvation log ──────────────────────
+  const aging = data.aging_events||[];
+  const starv = data.starvation_warnings||[];
+  const totalEvents = aging.length + starv.length;
+  document.getElementById('agingCountBadge').textContent = `${totalEvents} events`;
+  const logEl = document.getElementById('agingLog');
+  if (totalEvents === 0) {
+    logEl.innerHTML = '<div style="color:var(--text-dim);font-family:var(--mono);font-size:11px">No aging or starvation events.</div>';
+  } else {
+    const agingHtml = aging.map(e => `
+      <div class="log-entry aging">
+        <span class="log-time">t=${e.time}</span>
+        <span class="log-pid">${e.pid}</span>
+        <span class="log-msg">Priority boosted <span style="color:var(--text-dim)">${e.old_priority}</span> → <span style="color:var(--purple)">${e.new_priority}</span> (waited ${e.wait}t)</span>
+      </div>`).join('');
+    const starvHtml = starv.map(w => `
+      <div class="log-entry starv">
+        <span class="log-time">t=${w.detected_at}</span>
+        <span class="log-pid">${w.pid}</span>
+        <span class="log-msg" style="color:var(--red)">Starvation detected — waited ${w.wait_duration} units</span>
+      </div>`).join('');
+    logEl.innerHTML = agingHtml + starvHtml;
+  }
+
+  // ── Charts ──────────────────────────────────────
+  renderProcessCharts(procs);
+}
+
+// ── Gantt renderer ───────────────────────────────────
+function renderGantt(containerId, timeline, makespan) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  // Build per-process rows
+  const pids = [...new Set(timeline.filter(s=>!s.idle).map(s=>s.pid))];
+  const trackH = 32;
+  const labelW = 40;
+  const totalW = container.parentElement.clientWidth - labelW - 30 || 600;
+  const scale  = totalW / (makespan || 1);
+
+  let html = '';
+  // Single combined row (Gantt style CPU timeline)
+  html += `<div class="gantt-row">
+    <div class="gantt-label" style="color:var(--amber)">CPU</div>
+    <div class="gantt-track">`;
+  timeline.forEach((seg, i) => {
+    const w   = Math.max(1, (seg.end - seg.start) * scale);
+    const clr = seg.idle ? 'rgba(255,255,255,0.04)' : procColor(seg.pid);
+    const txt = (seg.end - seg.start) > 2 ? (seg.idle ? 'IDLE' : seg.pid) : '';
+    html += `<div class="gantt-seg${seg.idle?' idle':''}"
+              style="width:${w}px;background:${clr};animation-delay:${i*0.04}s"
+              data-tip="${seg.pid} [${seg.start}→${seg.end}]">${txt}</div>`;
+  });
+  html += `</div></div>`;
+
+  // Per-process rows
+  pids.forEach(pid => {
+    html += `<div class="gantt-row">
+      <div class="gantt-label" style="color:${procColor(pid)}">${pid}</div>
+      <div class="gantt-track">`;
+    let cursor = 0;
+    timeline.forEach(seg => {
+      // Idle before this seg
+      if (seg.start > cursor) {
+        const gapW = (seg.start - cursor) * scale;
+        html += `<div class="gantt-seg idle" style="width:${gapW}px;animation:none"></div>`;
+      }
+      const w = Math.max(1, (seg.end - seg.start) * scale);
+      if (!seg.idle && seg.pid === pid) {
+        html += `<div class="gantt-seg" style="width:${w}px;background:${procColor(pid)}"
+                 data-tip="${pid} runs [${seg.start}→${seg.end}]">${(seg.end-seg.start)>1?pid:''}</div>`;
+      } else {
+        html += `<div class="gantt-seg idle" style="width:${w}px;animation:none"></div>`;
+      }
+      cursor = seg.end;
+    });
+    html += `</div></div>`;
+  });
+
+  // Time axis
+  const ticks = Math.min(makespan, 20);
+  const step  = Math.ceil(makespan / ticks);
+  html += `<div class="gantt-time-axis" style="width:${totalW}px;height:16px;position:relative">`;
+  for (let t = 0; t <= makespan; t += step) {
+    html += `<div class="gantt-tick" style="left:${t * scale}px">${t}</div>`;
+  }
+  if (makespan % step !== 0) {
+    html += `<div class="gantt-tick" style="left:${makespan * scale}px">${makespan}</div>`;
+  }
+  html += '</div>';
+
+  container.innerHTML = html;
+}
+
+// ── CPU timeline bar ─────────────────────────────────
+function renderCpuTimeline(timeline, makespan) {
+  const el = document.getElementById('cpuTimeline');
+  el.innerHTML = timeline.map(seg => {
+    const pct = ((seg.end - seg.start) / makespan * 100).toFixed(2);
+    return `<div style="width:${pct}%;background:${seg.idle?'var(--bg3)':'var(--amber)'};height:100%;
+             transition:width .4s" data-tip="${seg.pid} [${seg.start}→${seg.end}]"></div>`;
+  }).join('');
+}
+
+// ── Process charts ───────────────────────────────────
+function renderProcessCharts(procs) {
+  const labels = procs.map(p=>p.id);
+  const colors = procs.map(p=>procColor(p.id));
+  const cfg = (data, label, color) => ({
+    type:'bar',
+    data: { labels, datasets:[{ label, data, backgroundColor: colors, borderWidth:0 }] },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false} },
+      scales:{
+        x:{ ticks:{color:'#5a6480',font:{family:'JetBrains Mono',size:11}}, grid:{color:'rgba(255,255,255,.04)'} },
+        y:{ ticks:{color:'#5a6480',font:{family:'JetBrains Mono',size:10}}, grid:{color:'rgba(255,255,255,.04)'} }
+      }
+    }
+  });
+  if (waitChartInst) waitChartInst.destroy();
+  if (tatChartInst)  tatChartInst.destroy();
+  waitChartInst = new Chart(document.getElementById('waitChart'), cfg(procs.map(p=>p.waiting_time), 'Wait', PROC_COLORS[0]));
+  tatChartInst  = new Chart(document.getElementById('tatChart'),  cfg(procs.map(p=>p.turnaround_time), 'TAT', PROC_COLORS[2]));
+}
+
+// ════════════════════════════════════════════════════
+//  COMPARISON VIEW RENDERER
+// ════════════════════════════════════════════════════
+function renderCompare(data) {
+  resetColors();
+  showResults('compare');
+
+  const results = data.results||[];
+  const best    = data.best_overall;
+
+  // Pre-assign colors per process from first result
+  if (results.length > 0) {
+    (results[0].processes||[]).forEach(p => procColor(p.id));
+  }
+
+  document.getElementById('cmpBestBadge').textContent = `Best: ${best}`;
+
+  // Adaptive decision
+  const dec = data.adaptive_decision||{};
+  document.getElementById('cmpDecisionAlgo').textContent   = dec.chosen||'—';
+  document.getElementById('cmpDecisionReason').textContent = dec.reasoning||'—';
+
+  // ── Find bests per metric ──────────────────────
+  const metricBest = {};
+  const metrics = ['avg_waiting_time','avg_turnaround_time','avg_response_time','context_switches','fairness_index','cpu_utilization','throughput'];
+  metrics.forEach(m => {
+    const vals = results.map(r=>r[m]||0);
+    const isHighGood = ['fairness_index','cpu_utilization','throughput'].includes(m);
+    metricBest[m] = isHighGood ? Math.max(...vals) : Math.min(...vals);
+  });
+
+  // ── Comparison table ───────────────────────────
+  document.getElementById('cmpTableBody').innerHTML = results.map(r => {
+    const isOverall = r.algorithm === best;
+    const cell = (key, isHighGood=false, fmt=v=>v.toFixed(2)) => {
+      const v    = r[key]||0;
+      const best_v = metricBest[key];
+      const cls  = Math.abs(v - best_v) < 0.001 ? 'cell-best' : '';
+      return `<td class="${cls}">${fmt(v)}</td>`;
+    };
+    const chips = [
+      r.algorithm===data.lowest_wait     ? '<span class="best-chip wait">⬇ WAIT</span>':'',
+      r.algorithm===data.best_fairness   ? '<span class="best-chip fair">⚖ FAIR</span>':'',
+      r.algorithm===data.best_throughput ? '<span class="best-chip thru">↑ THRU</span>':'',
+      r.algorithm===data.fewest_switches ? '<span class="best-chip ctx">⇄ CTX</span>':'',
+      isOverall                          ? '<span class="best-chip overall">★ BEST</span>':'',
+    ].join('');
+    return `<tr class="${isOverall?'best-row':''}">
+      <td style="font-weight:${isOverall?700:400}">${r.algorithm}${chips}</td>
+      ${cell('avg_waiting_time')}
+      ${cell('avg_turnaround_time')}
+      ${cell('avg_response_time')}
+      ${cell('context_switches',false,v=>v.toFixed(0))}
+      ${cell('fairness_index',true)}
+      ${cell('cpu_utilization',true,v=>v.toFixed(1)+'%')}
+      ${cell('throughput',true,v=>v.toFixed(3))}
+    </tr>`;
+  }).join('');
+
+  // ── Multi-algo Gantt ───────────────────────────
+  const maxMakespan = Math.max(...results.map(r=>r.makespan||0));
+  const ganttsEl = document.getElementById('cmpGantts');
+  ganttsEl.innerHTML = '';
+  results.forEach(r => {
+    const wrap = document.createElement('div');
+    wrap.className = 'cmp-gantt-row';
+    const algoDivId = `cg_${r.algorithm.replace(/\s/g,'_')}`;
+    wrap.innerHTML = `
+      <div class="cmp-gantt-algo" style="display:flex;align-items:center;gap:8px">
+        <span>${r.algorithm}</span>
+        ${r.algorithm===best ? '<span style="color:var(--amber);font-size:11px">★ Best Overall</span>' : ''}
+      </div>
+      <div class="gantt-wrap"><div class="gantt-container" id="${algoDivId}"></div></div>
+    `;
+    ganttsEl.appendChild(wrap);
+    renderGantt(algoDivId, r.timeline||[], maxMakespan);
+  });
+
+  // ── Radar chart ────────────────────────────────
+  const labels = ['Low Wait','Low TAT','Low RT','Low CtxSw','Fairness','CPU Util'];
+  const radarDatasets = results.slice(0,6).map((r,i) => {
+    // Normalize each metric 0→1, higher = better
+    const maxWait = Math.max(...results.map(x=>x.avg_waiting_time||0.001));
+    const maxTat  = Math.max(...results.map(x=>x.avg_turnaround_time||0.001));
+    const maxRt   = Math.max(...results.map(x=>x.avg_response_time||0.001));
+    const maxCtx  = Math.max(...results.map(x=>x.context_switches||0.001));
+    return {
+      label: r.algorithm,
+      data: [
+        1 - (r.avg_waiting_time||0)/maxWait,
+        1 - (r.avg_turnaround_time||0)/maxTat,
+        1 - (r.avg_response_time||0)/maxRt,
+        1 - (r.context_switches||0)/maxCtx,
+        r.fairness_index||0,
+        (r.cpu_utilization||0)/100,
+      ].map(v => parseFloat((v*100).toFixed(1))),
+      borderColor: PROC_COLORS[i],
+      backgroundColor: PROC_COLORS[i] + '22',
+      borderWidth: r.algorithm===best ? 2.5 : 1.5,
+      pointRadius: 3,
+    };
+  });
+
+  if (radarChartInst) radarChartInst.destroy();
+  radarChartInst = new Chart(document.getElementById('radarChart'), {
+    type:'radar',
+    data:{ labels, datasets: radarDatasets },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ labels:{ color:'#5a6480', font:{ family:'JetBrains Mono', size:10 }}}},
+      scales:{ r:{
+        ticks:{display:false}, grid:{ color:'rgba(255,255,255,.06)' },
+        pointLabels:{ color:'#8090b0', font:{ family:'JetBrains Mono', size:10 }},
+        min:0, max:100
+      }}
+    }
+  });
+
+  // ── Bar charts ─────────────────────────────────
+  const algos = results.map(r=>r.algorithm);
+  const barColors = results.map((r,i) => r.algorithm===best ? 'var(--amber)' : PROC_COLORS[i%PROC_COLORS.length]+'aa');
+  const mkBarChart = (id, instRef, dataArr, label) => {
+    if (instRef) instRef.destroy();
+    return new Chart(document.getElementById(id), {
+      type:'bar',
+      data:{ labels:algos, datasets:[{ label, data:dataArr, backgroundColor:barColors, borderWidth:0 }] },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{display:false} },
+        scales:{
+          x:{ ticks:{color:'#5a6480',font:{family:'JetBrains Mono',size:9},maxRotation:30}, grid:{color:'rgba(255,255,255,.04)'} },
+          y:{ ticks:{color:'#5a6480',font:{family:'JetBrains Mono',size:10}}, grid:{color:'rgba(255,255,255,.04)'} }
+        }
+      }
+    });
+  };
+  cmpWaitInst = mkBarChart('cmpWaitChart', cmpWaitInst, results.map(r=>+(r.avg_waiting_time||0).toFixed(2)), 'Avg Wait');
+  cmpCtxInst  = mkBarChart('cmpCtxChart',  cmpCtxInst,  results.map(r=>r.context_switches||0), 'Context Switches');
+  cmpCpuInst  = mkBarChart('cmpCpuChart',  cmpCpuInst,  results.map(r=>+(r.cpu_utilization||0).toFixed(1)), 'CPU%');
+  cmpFairInst = mkBarChart('cmpFairChart', cmpFairInst, results.map(r=>+(r.fairness_index||0).toFixed(4)), "Jain's Index");
+}
+</script>
+</body>
+</html>

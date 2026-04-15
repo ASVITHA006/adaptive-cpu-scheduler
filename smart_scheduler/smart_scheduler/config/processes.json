@@ -1,0 +1,48 @@
+{
+  "starvation_threshold": 15,
+  "aging_boost": 1,
+  "processes": [
+    {
+      "id": "P1",
+      "arrival": 0,
+      "burst": 8,
+      "priority": 2
+    },
+    {
+      "id": "P2",
+      "arrival": 1,
+      "burst": 4,
+      "priority": 1
+    },
+    {
+      "id": "P3",
+      "arrival": 2,
+      "burst": 9,
+      "priority": 3
+    },
+    {
+      "id": "P4",
+      "arrival": 3,
+      "burst": 5,
+      "priority": 2
+    },
+    {
+      "id": "P5",
+      "arrival": 4,
+      "burst": 2,
+      "priority": 1
+    },
+    {
+      "id": "P6",
+      "arrival": 0,
+      "burst": 5,
+      "priority": 1
+    },
+    {
+      "id": "P7",
+      "arrival": 0,
+      "burst": 9,
+      "priority": 4
+    }
+  ]
+}
